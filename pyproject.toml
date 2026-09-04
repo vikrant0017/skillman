@@ -1,13 +1,15 @@
 [project]
 name = "skillman"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Textual frontend for Vercel's agent skills CLI"
 readme = "README.md"
 authors = [
     { name = "Vikrant Pradhan", email = "pradhan.vikrant@hotmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "textual>=8.2.8",
+]
 
 [project.scripts]
 skillman = "skillman:main"
@@ -15,3 +17,11 @@ skillman = "skillman:main"
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.6",
+    "ty>=0.0.78",
+]
