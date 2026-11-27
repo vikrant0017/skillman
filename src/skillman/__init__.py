@@ -136,7 +136,7 @@ def search_skills_api(query: str) -> list[SearchSkill]:
             id=str(row["id"]),
             skill_id=str(row["skillId"]),
             name=str(row["name"]),
-            installs=int(row.get("installs", 0)),
+            installs=int(row.get("installs") or 0),
             source=str(row["source"]),
         )
         for row in rows
@@ -147,6 +147,9 @@ def search_skills_api(query: str) -> list[SearchSkill]:
 
 def install_global_skill(skill: SearchSkill) -> int:
     """Install one API search result using Vercel's non-interactive CLI form."""
+    for value in (skill.source, skill.skill_id):
+        if value.startswith("-"):
+            raise ValueError(f"Refusing to install {value!r}: it looks like an option.")
     command = [
         "npx",
         "skills",
@@ -249,7 +252,13 @@ class SearchInstallScreen(ModalScreen[None]):
     @on(ListView.Selected, "#search-results")
     def install_highlighted(self, event: ListView.Selected) -> None:
         if isinstance(event.item, SearchItem):
-            self.install(event.item.skill)
+            skill = event.item.skill
+
+            def complete_install(confirmed: bool | None) -> None:
+                if confirmed:
+                    self.install(skill)
+
+            self.app.push_screen(ConfirmInstall(skill), complete_install)
 
     def search(self) -> None:
         query = self.query_one("#query", Input).value.strip()
@@ -265,7 +274,7 @@ class SearchInstallScreen(ModalScreen[None]):
         self.app.call_from_thread(self.set_status, f"Searching for '{query}'…")
         try:
             results = self.searcher(query)
-        except (OSError, ValueError, json.JSONDecodeError) as error:
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             self.app.call_from_thread(self.show_search_error, str(error))
             return
         self.app.call_from_thread(self.show_results, results)
@@ -299,7 +308,7 @@ class SearchInstallScreen(ModalScreen[None]):
         self.app.call_from_thread(self.set_status, f"Installing {skill.name}…")
         try:
             code = self.installer(skill)
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
             self.app.call_from_thread(self.show_install_error, skill, str(error))
             return
         self.app.call_from_thread(self.show_install_result, skill, code)
@@ -321,6 +330,41 @@ class SearchInstallScreen(ModalScreen[None]):
 
     def show_install_error(self, skill: SearchSkill, error: str) -> None:
         self.set_status(f"Could not start installing {skill.name}: {error}")
+
+
+class ConfirmInstall(ModalScreen[bool]):
+    CSS = """
+    ConfirmInstall { align: center middle; }
+    #install-dialog { width: 70; height: auto; padding: 1 2; background: $surface; border: heavy $warning; }
+    #install-actions { height: 3; margin-top: 1; align: right middle; }
+    #install-actions Button { margin-left: 1; }
+    """
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, skill: SearchSkill) -> None:
+        super().__init__()
+        self.skill = skill
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="install-dialog"):
+            yield Label(f"Install '{self.skill.name}' globally?")
+            yield Label(f"Source: {self.skill.source}", markup=False)
+            yield Static(
+                "Skills are instructions your agents will follow. Only install ones you trust."
+            )
+            with Horizontal(id="install-actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Install", variant="warning", id="install")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    @on(Button.Pressed)
+    def answer(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "install")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class ConfirmRemove(ModalScreen[bool]):
@@ -544,6 +588,8 @@ class SkillsManager(App[None]):
             elif path.suffix.lower() not in {".md", ".mdx"}:
                 language = path.suffix.removeprefix(".")
                 content = f"```{language}\n{content}\n```"
+        except UnicodeDecodeError:
+            content = f"# Cannot display {path.name}\n\nThis file is not UTF-8 text."
         except OSError as error:
             content = f"# Could not read {path.name}\n\n{error}"
         self.query_one("#metadata", Static).update(metadata)
